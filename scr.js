@@ -20,15 +20,31 @@ var IGNORE_MARK = /\[.+?\]\s*#/;
 
 var AUTHORS_RIGHTS_MARK = /^\s*\$\s*/;
 
+var OUTPUT_DATE_FORMAT = 'YYYY-MM-DD';
+
 function Task(line) {
     var matches = line.match(TASK_PATTERN);
-    this.hours = matches[1];
-    this.minutes = matches[2];
-    this.seconds = matches[3];
+    this.hours = parseInt(matches[1]);
+    this.minutes = parseInt(matches[2]);
+    this.seconds = parseInt(matches[3]);
     this.project = matches[4];
     this.taskName = matches[5];
     this.authorsRights = Task.checkAuthorsRights(this.taskName);
     this.date;
+
+    this.duration = function(round) {
+        var duration = moment.duration();
+        duration.add(this.hours, 'H');
+        duration.add(this.minutes, 'm');
+        duration.add(this.seconds, 's');
+
+        if (typeof(round) === 'undefined' && duration.seconds() != 0) {
+            duration.subtract(duration.seconds(), 's');
+            duration.add(1, 'm');
+        }
+
+        return duration;
+    }
 }
 Task.checkAuthorsRights = function(taskName) {
     return taskName.search(AUTHORS_RIGHTS_MARK) != -1;
@@ -36,15 +52,23 @@ Task.checkAuthorsRights = function(taskName) {
 
 function WorkDay(line) {
     var matches = line.match(DATE_PATTERN);
-    this.day = matches[1];
-    this.month = matches[2];
-    this.year = matches[3];
+    this.day = parseInt(matches[1]);
+    this.month = parseInt(matches[2]);
+    this.year = parseInt(matches[3]);
     this.date = new Date(this.year, this.month - 1, this.day);
     this.tasks = [];
 
     this.addTask = function(task) {
         task.date = this.date;
         this.tasks.push(task);
+    }
+    this.summarizeHours = function() {
+        var sum = moment.duration();
+        for (t in this.tasks) {
+            var task = this.tasks[t];
+            sum.add(task.duration());
+        }
+        return sum;
     }
 }
 
@@ -57,27 +81,6 @@ function TimeSheet() {
     this.addTaskToWorkDay = function(task) {
         this.workDays[this.workDays.length - 1].addTask(task);
     }
-
-    this.toString = function() {
-        var str = "";
-        for (d in this.workDays) {
-            var workDay = this.workDays[d];
-            str += workDay.day + '-' + workDay.month + '-' + workDay.year + '\n';
-            for (t in workDay.tasks) {
-                var task = workDay.tasks[t];
-                str += '\t' + '[' + task.project + '] ' + task.taskName + '\n';
-            }
-            str += '\n';
-        }
-        return str;
-    }
-}
-
-function fillZero2pos(number) {
-    if (number.toString().length == 1) {
-        return '0' + number;
-    }
-    return number;
 }
 
 function ProjectSheet() {
@@ -97,8 +100,9 @@ function ProjectSheet() {
             str += '\t*** ' + name + ' ***\n';
             for (t in tasks) {
                 var task = tasks[t];
-                str += task.date.getFullYear() + '-' + fillZero2pos(task.date.getMonth() + 1) + '-' + fillZero2pos(task.date.getDate()) +
-                       ' | ' + task.hours + ':' + task.minutes +
+                var time = moment.utc(task.duration().asMilliseconds());
+                str += moment(task.date).format(OUTPUT_DATE_FORMAT) +
+                       ' | ' + time.format('HH:mm') +
                        ' | ' + (task.authorsRights ? 1 : 0) +
                        ' | ' + task.taskName.replace(AUTHORS_RIGHTS_MARK, '') + '\n';
             }
@@ -136,12 +140,25 @@ function groupByProject(timeSheet) {
              projectSheet.addTask(task);
          }
     });
-    return projectSheet.toString();
+    return projectSheet;
 }
 
 function process(input) {
     var timeSheet = processTimeSheet(input);
-    var output = groupByProject(timeSheet);
+    var projectSheet = groupByProject(timeSheet);
+
+    var timing = '\tSummarize:\n';
+    for (d in timeSheet.workDays) {
+        var workDay = timeSheet.workDays[d];
+        var duration = workDay.summarizeHours();
+        timing += moment(workDay.date).format(OUTPUT_DATE_FORMAT) +
+                  ' -> ' + moment.utc(duration.asMilliseconds()).format('HH:mm') +
+                  (duration.asHours() < 7.5 ? ' (!)' : '') + '\n';
+    }
+
+    var output = projectSheet.toString();
+    output += '\n\n';
+    output += timing;
 
     return output;
 }
